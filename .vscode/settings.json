@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "stdio.h": "c",
+        "numbers": "c",
+        "atomic": "c",
+        "random": "c",
+        "unistd.h": "c",
+        "string.h": "c",
+        "wait.h": "c",
+        "types.h": "c",
+        "stdlib.h": "c",
+        "array": "c",
+        "string_view": "c",
+        "initializer_list": "c",
+        "utility": "c"
+    }
+}
