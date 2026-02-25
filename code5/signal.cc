@@ -12,23 +12,23 @@ void handle_1(int x)
     }
 }
 
-// void handle_2(int x)
-// {
-//     std::cout<<"信号"<<x<<"递达!"<<std::endl;
-//     sigset_t pending;
-//     sigpending(&pending);
-//     for (int i = 1; i <=31; i++)
-//     {
-//         if(sigismember(&pending,i))
-//         {
-//             std::cout<<"1";
-//         }
-//         else{
-//             std::cout<<"0";
-//         }
-//     }
-//     std::cout<<std::endl;
-// }
+void handle_2(int x)
+{
+    std::cout<<"信号"<<x<<"递达!"<<std::endl;
+    sigset_t pending;
+    sigpending(&pending);
+    for (int i = 1; i <=31; i++)
+    {
+        if(sigismember(&pending,i))
+        {
+            std::cout<<"1";
+        }
+        else{
+            std::cout<<"0";
+        }
+    }
+    std::cout<<std::endl;
+}
 
 int main()
 {
