@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <functional>
+#include <sys/epoll.h>
 // 宏函数定义
 #define INF 0
 #define DBG 1
@@ -173,10 +174,10 @@ public:
 };
 
 #define MAX_LISTEN 1024
-//sockaddr_in,sockaddr
-//setsockopt
-//EAGAIN,EINTR
-//fctnl
+// sockaddr_in,sockaddr
+// setsockopt
+// EAGAIN,EINTR
+// fctnl
 class Socket
 {
 private:
@@ -311,52 +312,52 @@ public:
     // 设置套接字为非阻塞模式
     void NonBlock()
     {
-        int flag=fcntl(_sockfd,F_GETFL,0);
-        fcntl(_sockfd,F_SETFL,flag| O_NONBLOCK);
+        int flag = fcntl(_sockfd, F_GETFL, 0);
+        fcntl(_sockfd, F_SETFL, flag | O_NONBLOCK);
     }
     // 设置套接字地址复用
     void ReuseAddr()
     {
-        int val=1;
+        int val = 1;
         // setsockopt函数用于设置套接字选项，参数说明如下：
         // __fd：套接字文件描述符，指定要设置选项的套接字。
         // __level：选项所在的协议层，通常使用SOL_SOCKET表示套接字级别的选项。
         // __optname：要设置的选项名称，例如SO_REUSEADDR表示允许重用本地地址，SO_REUSEPORT表示允许多个套接字绑定到同一个端口。
         // __optval：指向包含选项值的缓冲区的指针，这里传入&val表示设置选项的值为1。
         // __optlen：选项值的长度，这里传入sizeof(int)表示选项值的长度为一个整数的大小。
-        setsockopt(_sockfd,SOL_SOCKET,SO_REUSEADDR,&val,sizeof(int));
-        val=1;
-        setsockopt(_sockfd,SOL_SOCKET,SO_REUSEPORT,&val,sizeof(int));
+        setsockopt(_sockfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
+        val = 1;
+        setsockopt(_sockfd, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(int));
     }
-    //创建服务端连接
-    bool CreateServer (uint64_t port, const std::string &ip = "0.0.0.0",bool block_flag=false)
+    // 创建服务端连接
+    bool CreateServer(uint64_t port, const std::string &ip = "0.0.0.0", bool block_flag = false)
     {
-        //创建，绑定，监听，非阻塞，地址复用
-        if(Create()==false)
+        // 创建，绑定，监听，非阻塞，地址复用
+        if (Create() == false)
         {
             return false;
         }
-        if(Bind(ip,port)==false)
-        {
-            return false;   
-        }
-        if(Listen()==false)
+        if (Bind(ip, port) == false)
         {
             return false;
         }
-        if(block_flag)
-        NonBlock();
+        if (Listen() == false)
+        {
+            return false;
+        }
+        if (block_flag)
+            NonBlock();
         ReuseAddr();
     }
-    //创建客户端连接
-    bool CreateClient(const std::string &ip, uint64_t port,bool block_flag=false)
+    // 创建客户端连接
+    bool CreateClient(const std::string &ip, uint64_t port, bool block_flag = false)
     {
-        //创建，连接
-        if(Create()==false)
+        // 创建，连接
+        if (Create() == false)
         {
             return false;
         }
-        if(Connect(ip,port)==false)
+        if (Connect(ip, port) == false)
         {
             return false;
         }
@@ -365,35 +366,229 @@ public:
 };
 class Poller;
 class EventLoop;
-//对描述符需要监控的事件和触发的事件进行管理(可读，可写,关闭，错误，任意)
+// 对描述符需要监控的事件和触发的事件进行管理(可读，可写,关闭，错误，任意)
 class Channel
 {
-    private:
+    /*
+    EPOLLIN：表示对应的文件描述符可以读（包括对端SOCKET正常关闭）；
+    EPOLLOUT：表示对应的文件描述符可以写；
+    EPOLLRDHUP：表示对应的文件描述符读关闭；
+    EPOLLPRI：表示对应的文件描述符有紧急数据可读；
+    EPOLLHUP：表示对应的文件描述符被挂断；
+    EPOLLERR：表示对应的文件描述符发生错误；
+    */
+private:
     int fd; // 监控的文件描述符
-    EventLoop*loop;
-    uint32_t events; // 监控的事件类型
-    uint32_t revents; // 触发的事件类型
-    using Eventcallback=std::function<void()>;
-    Eventcallback _read_callback; // 可读事件回调函数
+    EventLoop *_loop;
+    uint32_t _events;  // 监控的事件类型
+    uint32_t _revents; // 触发的事件类型
+    using Eventcallback = std::function<void()>;
+    Eventcallback _read_callback;  // 可读事件回调函数
     Eventcallback _write_callback; // 可写事件回调函数
     Eventcallback _close_callback; // 关闭事件回调函数
     Eventcallback _error_callback; // 错误事件回调函数
     Eventcallback _event_callback; // 任意事件回调函数
-    public:
-    Channel(){}
-    void SetReadCallBack(){}// 设置可读事件回调函数
-    void SetWriteCallBack(){}// 设置可写事件回调函数
-    void SetCloseCallBack(){}// 设置关闭事件回调函数
-    void SetErrorCallBack(){}// 设置错误事件回调函数
-    void SetEventCallBack(){}// 设置任意事件回调函数
-    void EnableRead(){}// 开启可读事件监控
-    void EnableWrite(){}// 开启可写事件监控
-    void DisableRead(){}// 关闭可读事件监控
-    void DisableWrite(){}// 关闭可写事件监控
-    void DisableAll(){}// 关闭所有事件监控
-    void ReadAble(){}// 是否可读
-    void WriteAble(){}// 是否可写
-    void Remove(){}//移除监控
-    void Update(){}// 更新监控事件
-    void HandleEvent(){}// 处理触发的事件
+public:
+    Channel() {}
+    int GetEvents() const
+    {
+        return _events;
+    } // 获取监控的事件类型
+    int GetFd() const
+    {
+        return fd;
+    } // 获取监控的文件描述符
+    void SetRevents(uint32_t revents)
+    {
+        _revents = revents;
+    } // 设置触发的事件类型
+    void SetReadCallBack(const Eventcallback &cb)
+    {
+        _read_callback = cb;
+    } // 设置可读事件回调函数
+    void SetWriteCallBack(const Eventcallback &cb)
+    {
+        _write_callback = cb;
+    } // 设置可写事件回调函数
+    void SetCloseCallBack(const Eventcallback &cb)
+    {
+        _close_callback = cb;
+    } // 设置关闭事件回调函数
+    void SetErrorCallBack(const Eventcallback &cb)
+    {
+        _error_callback = cb;
+    } // 设置错误事件回调函数
+    void SetEventCallBack(const Eventcallback &cb)
+    {
+        _event_callback = cb;
+    } // 设置任意事件回调函数
+    void EnableRead()
+    {
+        _events |= EPOLLIN;
+    } // 开启可读事件监控
+    void EnableWrite()
+    {
+        _events |= EPOLLOUT;
+    } // 开启可写事件监控
+    void DisableRead() { _events &= ~EPOLLIN; } // 关闭可读事件监控
+    void DisableWrite()
+    {
+        _events &= ~EPOLLOUT;
+    } // 关闭可写事件监控
+    void DisableAll()
+    {
+        _events = 0;
+    } // 关闭所有事件监控
+    bool ReadAble()
+    {
+        return _events & EPOLLIN;
+    } // 是否可读
+    bool WriteAble()
+    {
+        return _events & EPOLLOUT;
+    } // 是否可写
+    void Remove() {} // 移除监控
+    void Update() {} // 更新监控事件
+    void HandleEvent()
+    {
+        if ((_revents & EPOLLIN) || (_revents & EPOLLRDHUP) || (_revents & EPOLLPRI))
+        {
+            // 可读事件触发，EPOLLRDHUP表示对端关闭连接，EPOLLPRI表示有紧急数据可读
+            if (_read_callback)
+            {
+                _read_callback();
+            }
+        }
+        if (_revents & EPOLLOUT)
+        {
+            if (_write_callback)
+            {
+                _write_callback();
+            }
+        }
+        else if (_revents & EPOLLHUP)
+        {
+            if (_close_callback)
+            {
+                _close_callback();
+            }
+        }
+        else if (_revents & EPOLLERR)
+        {
+            if (_error_callback)
+            {
+                _error_callback();
+            }
+        }
+        // 无论什么事件都要触发任意事件回调函数，刷新活跃度
+        if (_event_callback)
+        {
+            _event_callback();
+        }
+    } // 处理触发的事件
+};
+#define MAX_EPOLLEVENTS 1024
+// 通过EPOLL实现对描述符的封装
+// epoll_ctl函数用于控制epoll实例的事件注册、修改和删除，参数说明如下：
+// __epfd：epoll实例的文件描述符，表示要操作的epoll实例。
+// __op：操作类型，表示要执行的操作，可以是以下值之一：
+// EPOLL_CTL_ADD：向epoll实例中添加一个新的文件描述符和事件类型的监控。
+// EPOLL_CTL_MOD：修改已经注册的文件描述符的事件类型监控。
+// EPOLL_CTL_DEL：从epoll实例中删除一个已经注册的文件描述符的监控。
+// __fd：要操作的文件描述符，表示要添加、修改或删除监控的文件描述符。
+// __event：指向一个epoll_event结构体的指针，包含要监控的事件类型和相关数据。epoll_event结构体
+
+// epoll_create函数用于创建一个新的epoll实例，参数说明如下：
+//  __size：指定epoll实例能够监控的最大文件描述符数量。这个参数在现代Linux内核中已经被忽略，但仍然需要传入一个正整数
+
+// epoll_wait函数用于等待epoll实例中注册的事件发生，参数说明如下：
+// __epfd：epoll实例的文件描述符，表示要等待事件的epoll实例。
+// __events：指向一个epoll_event结构体数组的指针，用于存储发生事件的文件描述符和相关数据。数组的大小应该至少为maxevents参数指定的值。
+// __maxevents：指定events数组的大小，表示events数组中可以存储的最大事件数量。这个参数决定了epoll_wait函数一次能够返回的最大事件数量。
+// __timeout：指定等待事件的超时时间，单位为毫秒。可以设置为以下值之一：
+// -1：表示无限等待，直到有事件发生。
+// 0：表示立即返回，不等待事件发生
+//返回值：成功时返回发生事件的文件描述符数量，失败时返回-1，并设置errno以指示错误原因。
+class Poller
+{
+private:
+    int _epfd;
+    struct epoll_event _events[MAX_EPOLLEVENTS];  // 存储触发事件的数组
+    std::unordered_map<int, Channel *> _channels; // 文件描述符到Channel对象的映射
+private:
+    void Updata(Channel *channel, int op)
+    {
+        int fd = channel->GetFd();
+        struct epoll_event ev;
+        ev.data.fd = fd;
+        ev.events = channel->GetEvents();
+        int ret = epoll_ctl(_epfd, op, fd, &ev);
+        if (ret < 0)
+        {
+            ERR_LOG("epoll_ctl failed!!");
+        }
+        return;
+    }
+    // 判断一个描述符是否添加了poller管理
+    bool HasChannel(Channel *channel)
+    {
+        auto it = _channels.find(channel->GetFd());
+        if (it == _channels.end())
+        {
+            return false;
+        }
+        return true;
+    }
+
+public:
+    Poller()
+    {
+        _epfd == epoll_create(MAX_EPOLLEVENTS);
+        if (_epfd < 0)
+        {
+            ERR_LOG("epoll_create failed!!");
+            abort();
+        }
+    }
+    void UpdataEvent(Channel *channel)
+    {
+        bool exist = HasChannel(channel);
+        if (exist == false)
+        {
+            // 不存在添加
+            _channels.insert(std::make_pair(channel->GetFd(), channel));
+            return Updata(channel, EPOLL_CTL_ADD);
+        }
+    }
+    //删除事件
+    void RemoveEvent(Channel *channel)
+    {
+        auto it = _channels.find(channel->GetFd());
+        if (it != _channels.end())
+        {
+            _channels.erase(it);
+        }
+        return Updata(channel, EPOLL_CTL_DEL);
+    }
+    //开始监控并返回活跃连接
+    void Moniter(std::vector<Channel *> *active)
+    {
+        int nfds=epoll_wait(_epfd, _events, MAX_EPOLLEVENTS, -1);
+        if(nfds<0)
+        {
+            if(errno=EINTR)
+            {
+                return;
+            }
+            ERR_LOG("epoll_wait failed!!");
+            abort();
+        }
+        for(int i=0;i<nfds;i++)
+        {
+            auto it =_channels.find(_events[i].data.fd);
+            assert(it!=_channels.end());
+            it->second->SetRevents(_events[i].events);//设置就绪事件
+            active->push_back(it->second);
+        }
+    }
 };
