@@ -13,6 +13,11 @@
 #include <errno.h>
 #include <functional>
 #include <sys/epoll.h>
+#include <unordered_map>
+#include <memory>
+#include <sys/timerfd.h>
+#include <thread>
+#include <mutex>
 // 宏函数定义
 #define INF 0
 #define DBG 1
@@ -378,7 +383,7 @@ class Channel
     EPOLLERR：表示对应的文件描述符发生错误；
     */
 private:
-    int fd; // 监控的文件描述符
+    int _fd; // 监控的文件描述符
     EventLoop *_loop;
     uint32_t _events;  // 监控的事件类型
     uint32_t _revents; // 触发的事件类型
@@ -389,14 +394,19 @@ private:
     Eventcallback _error_callback; // 错误事件回调函数
     Eventcallback _event_callback; // 任意事件回调函数
 public:
-    Channel() {}
+    Channel(EventLoop* loop,int fd):
+    _fd(fd),
+    _events(0),
+    _revents(0),
+    _loop(loop)
+    {}
     int GetEvents() const
     {
         return _events;
     } // 获取监控的事件类型
     int GetFd() const
     {
-        return fd;
+        return _fd;
     } // 获取监控的文件描述符
     void SetRevents(uint32_t revents)
     {
@@ -508,7 +518,7 @@ public:
 // __timeout：指定等待事件的超时时间，单位为毫秒。可以设置为以下值之一：
 // -1：表示无限等待，直到有事件发生。
 // 0：表示立即返回，不等待事件发生
-//返回值：成功时返回发生事件的文件描述符数量，失败时返回-1，并设置errno以指示错误原因。
+// 返回值：成功时返回发生事件的文件描述符数量，失败时返回-1，并设置errno以指示错误原因。
 class Poller
 {
 private:
@@ -560,7 +570,7 @@ public:
             return Updata(channel, EPOLL_CTL_ADD);
         }
     }
-    //删除事件
+    // 删除事件
     void RemoveEvent(Channel *channel)
     {
         auto it = _channels.find(channel->GetFd());
@@ -570,25 +580,194 @@ public:
         }
         return Updata(channel, EPOLL_CTL_DEL);
     }
-    //开始监控并返回活跃连接
+    // 开始监控并返回活跃连接
     void Moniter(std::vector<Channel *> *active)
     {
-        int nfds=epoll_wait(_epfd, _events, MAX_EPOLLEVENTS, -1);
-        if(nfds<0)
+        int nfds = epoll_wait(_epfd, _events, MAX_EPOLLEVENTS, -1);
+        if (nfds < 0)
         {
-            if(errno=EINTR)
+            if (errno = EINTR)
             {
                 return;
             }
             ERR_LOG("epoll_wait failed!!");
             abort();
         }
-        for(int i=0;i<nfds;i++)
+        for (int i = 0; i < nfds; i++)
         {
-            auto it =_channels.find(_events[i].data.fd);
-            assert(it!=_channels.end());
-            it->second->SetRevents(_events[i].events);//设置就绪事件
+            auto it = _channels.find(_events[i].data.fd);
+            assert(it != _channels.end());
+            it->second->SetRevents(_events[i].events); // 设置就绪事件
             active->push_back(it->second);
         }
     }
+};
+// 时间轮定时器
+
+using Taskfunc = std::function<void()>; // 定时任务
+using Release = std::function<void()>;  // 定时器对象释放函数
+class Timetask
+{
+
+private:
+    uint64_t _id;      // 定时器任务id
+    uint32_t _timeout; // 定时任务的推迟时间
+    bool _cancel;      // 定时任务是否被取消
+    Taskfunc _func;    // 定时器对象要执行的任务
+    Release _release;  // timewheel释放该定时器对象时要执行的函数
+public:
+    Timetask(uint64_t id, uint32_t delay, const Taskfunc &cb) : _id(id), _timeout(delay), _cancel(false), _func(cb) {}
+
+    ~Timetask()
+    {
+        if (_cancel == false) // 定时任务没有被取消,则执行定时任务
+        {
+            _func();
+        }
+        _release();
+    }
+    // 设置是否取消
+    void cancel()
+    {
+        _cancel = true;
+    }
+    // 设置释放函数
+    void setRelease(const Release &rel)
+    {
+        _release = rel;
+    }
+    // 获取定时任务推迟时间
+    uint32_t Delaytime()
+    {
+        return _timeout;
+    }
+};
+//timerfd_create函数用于创建一个新的定时器文件描述符，参数说明如下：
+//settimerfd函数用于设置定时器的初始值和间隔时间，参数说明如下：
+//itimerspec结构体定义如下：
+// struct itimerspec {
+//     struct timespec it_interval; // 定时器的间隔时间
+//     struct timespec it_value;    // 定时器的初始值
+// };
+
+class Eventloop;
+class TimerWheel
+{
+private:
+    using WeakTask = std::weak_ptr<Timetask>;
+    using ShPtrTask = std::shared_ptr<Timetask>;
+    int _tick;                                     /// 秒针走到哪释放哪
+    int _capacity;                                 // 最大延迟时间
+    std::vector<std::vector<ShPtrTask>> _wheel;    // 时间轮
+    std::unordered_map<uint64_t, WeakTask> _timer; // 定时器id到定时器对象的映射
+
+    EventLoop *_loop;
+    int _timerfd; //
+    std::unique_ptr<Channel> _timer_channel;
+
+private:
+    void RemoveTimer(uint64_t id)
+    {
+        auto it = _timer.find(id);
+        if (it != _timer.end())
+        {
+            _timer.erase(it);
+        }
+    }
+    static int Createtimerfd()
+    {
+        int timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+        if (timerfd < 0)
+        {
+            ERR_LOG("timerfd_create failed!!");
+            abort();
+        }
+        struct itimerspec itime;
+        itime.it_value.tv_sec = 1;
+        itime.it_value.tv_nsec = 0;
+        itime.it_interval.tv_sec = 1;
+        itime.it_interval.tv_nsec = 0;
+        timerfd_settime(timerfd, 0, &itime, nullptr);
+        return timerfd;
+    }
+    int ReadTimerfd()
+    {
+        uint64_t times;
+        int ret = read(_timerfd, &times, 8);
+        if (ret < 0)
+        {
+            ERR_LOG("read timerfd failed!!");
+            abort();
+        }
+    }
+    void Run()
+    {
+        _tick = (_tick + 1) % _capacity; // 秒针走一步
+        _wheel[_tick].clear();           // 释放该位置的所有定时器对象
+    }
+    void OnTime()
+    {
+        // 超时多少次执行多少次任务
+        int count = ReadTimerfd();
+        for (int i = 0; i < count; i++)
+        {
+            Run();
+        }
+    }
+    void TimerAddInLoop(uint64_t id, uint32_t delay, const Taskfunc &cb)
+    {
+        ShPtrTask pt(new Timetask(id, delay, cb));
+        pt->setRelease(std::bind(&TimerWheel::RemoveTimer, this, id)); // 设置释放函数
+        int pos = (_tick + delay) % _capacity;                        // 计算该定时器对象应该放到时间轮的哪个位置
+        _wheel[pos].push_back(pt);                                    // 放入时间轮
+        _timer[id] = WeakTask(pt);                                    // 存储弱引用
+    }
+    void TimerRefreshInLoop(uint64_t id)
+    {
+        //通过保存的weak_ptr对象构造share_ptr对象放入轮子
+        auto it = _timer.find(id);
+        if (it == _timer.end())
+        {
+            return;
+        }
+        ShPtrTask pt = it->second.lock();
+        int delay = pt->Delaytime();
+        int pos = (_tick + delay) % _capacity; // 计算该定时器对象应该放到时间轮的哪个位置
+        _wheel[pos].push_back(pt);             // 放入时间轮
+    }
+        void TimerCancelInLoop(uint64_t id)
+    {
+        auto it = _timer.find(id);
+        if (it == _timer.end())
+        {
+            return;
+        }
+        ShPtrTask pt = it->second.lock();
+        if (pt)
+            pt->cancel();
+    }
+public:
+    TimerWheel(EventLoop* loop) : _tick(0), _capacity(60), _wheel(_capacity),_loop(loop),
+        _timerfd(Createtimerfd()),
+        _timer_channel(new Channel(_loop, _timerfd))
+        {
+        _timer_channel->SetReadCallBack(std::bind(&TimerWheel::OnTime, this));
+        _timer_channel->EnableRead();
+        }
+    void TimerAdd(uint64_t id, uint32_t delay, const Taskfunc &cb);
+    void TimerRefresh(uint64_t id);
+    void TimerCancel(uint64_t id);
+    bool HasTimer(uint64_t id)
+    {
+        auto it = _timer.find(id);
+        if (it == _timer.end())
+        {
+            return false;
+        }
+        return true;
+    }
+};
+class EventLoop
+{
+
 };
