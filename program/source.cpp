@@ -324,12 +324,7 @@ public:
     void ReuseAddr()
     {
         int val = 1;
-        // setsockopt函数用于设置套接字选项，参数说明如下：
-        // __fd：套接字文件描述符，指定要设置选项的套接字。
-        // __level：选项所在的协议层，通常使用SOL_SOCKET表示套接字级别的选项。
-        // __optname：要设置的选项名称，例如SO_REUSEADDR表示允许重用本地地址，SO_REUSEPORT表示允许多个套接字绑定到同一个端口。
-        // __optval：指向包含选项值的缓冲区的指针，这里传入&val表示设置选项的值为1。
-        // __optlen：选项值的长度，这里传入sizeof(int)表示选项值的长度为一个整数的大小。
+        // setsockopt函数用于设置套接字选项\
         setsockopt(_sockfd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
         val = 1;
         setsockopt(_sockfd, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(int));
@@ -500,25 +495,8 @@ public:
 #define MAX_EPOLLEVENTS 1024
 // 通过EPOLL实现对描述符的封装
 // epoll_ctl函数用于控制epoll实例的事件注册、修改和删除，参数说明如下：
-// __epfd：epoll实例的文件描述符，表示要操作的epoll实例。
-// __op：操作类型，表示要执行的操作，可以是以下值之一：
-// EPOLL_CTL_ADD：向epoll实例中添加一个新的文件描述符和事件类型的监控。
-// EPOLL_CTL_MOD：修改已经注册的文件描述符的事件类型监控。
-// EPOLL_CTL_DEL：从epoll实例中删除一个已经注册的文件描述符的监控。
-// __fd：要操作的文件描述符，表示要添加、修改或删除监控的文件描述符。
-// __event：指向一个epoll_event结构体的指针，包含要监控的事件类型和相关数据。epoll_event结构体
-
 // epoll_create函数用于创建一个新的epoll实例，参数说明如下：
-//  __size：指定epoll实例能够监控的最大文件描述符数量。这个参数在现代Linux内核中已经被忽略，但仍然需要传入一个正整数
-
 // epoll_wait函数用于等待epoll实例中注册的事件发生，参数说明如下：
-// __epfd：epoll实例的文件描述符，表示要等待事件的epoll实例。
-// __events：指向一个epoll_event结构体数组的指针，用于存储发生事件的文件描述符和相关数据。数组的大小应该至少为maxevents参数指定的值。
-// __maxevents：指定events数组的大小，表示events数组中可以存储的最大事件数量。这个参数决定了epoll_wait函数一次能够返回的最大事件数量。
-// __timeout：指定等待事件的超时时间，单位为毫秒。可以设置为以下值之一：
-// -1：表示无限等待，直到有事件发生。
-// 0：表示立即返回，不等待事件发生
-// 返回值：成功时返回发生事件的文件描述符数量，失败时返回-1，并设置errno以指示错误原因。
 class Poller
 {
 private:
