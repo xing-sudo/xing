@@ -19,6 +19,7 @@
 #include <thread>
 #include <mutex>
 #include <sys/eventfd.h>
+#include <condition_variable>
 // 宏函数定义
 #define INF 0
 #define DBG 1
@@ -891,5 +892,61 @@ class EventLoop
     bool HasTimer(uint64_t id)
     {
         return _timer_wheel.HasTimer(id);
+    }
+};
+// 保证thread和Eventloop的对应关系，防止线程创建了后而Eventloop还没有创建，导致线程无法获取_loop
+class LoopThread//保证线程获取_loop的一致性，防止线程获取的EventLoop是未初始的值
+{
+    private:
+    std::thread _thread;
+    std::mutex _mutex;
+    std::condition_variable _cond ;
+    EventLoop* _loop; //eventloop必须在入口函数中实例化完成赋值不然线程不安全
+    public:
+    LoopThread():_loop(nullptr),_thread(std::thread(&LoopThread::ThreadEntry,this))//thread支持函数指针和参数绑定不需要bind（），用也没事
+    {}
+    void ThreadEntry()
+    {
+        EventLoop loop;
+        {
+            std::unique_lock<std::mutex> _lock(_mutex);
+            _loop=&loop;
+            _cond.notify_all();//唤醒cond上阻塞的线程
+        }
+        loop.Start();
+    }
+    EventLoop* GetLoop()
+    {
+        EventLoop* loop=nullptr;
+        {
+            std::unique_lock<std::mutex> _lock(_mutex);
+            _cond.wait(_lock,[&](){ return _loop!=nullptr;});//loop为null就一直阻塞
+            loop=_loop;
+        }
+        return loop;
+    }
+};
+// 对所有的loopthread进行分配，管理
+class LoopThreadPool
+{
+    private:
+    int _thread_count;//从属线程数量为0分配主线程 n RR轮询
+    int _next;//下一个分配的线程
+    EventLoop* _base_loop;//主线程的EventLoop
+    std::vector<EventLoop*> _loops;//从属线程>0则在loops中进行轮询分配
+    std::vector<LoopThread*> _thread;//保存loopthread对象
+    public:
+    LoopThreadPool(){}
+    void SetThreadCount(int  nums)
+    {
+
+    }
+    void Create()
+    {
+
+    }
+    EventLoop* NextLoop()
+    {
+
     }
 };
