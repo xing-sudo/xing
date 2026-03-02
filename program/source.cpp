@@ -939,14 +939,93 @@ class LoopThreadPool
     LoopThreadPool(){}
     void SetThreadCount(int  nums)
     {
-
+        _thread_count=nums;
     }
     void Create()
     {
-
+        if(_thread_count>0)//从属线程数量必须大于0
+        {
+            //更新
+            _thread.resize(_thread_count);
+            _loops.resize(_thread_count);
+            for(int i=0;i<_thread_count;i++)
+            {
+                _thread[i]=new LoopThread();//创建线程对象，在入口函数对EventLoop进行初始化保证线程安全
+                _loops[i]=_thread[i]->GetLoop();
+            }
+        }
+        return;
     }
     EventLoop* NextLoop()
     {
-
+        if(_thread_count==0)
+        {
+            return _base_loop;
+        }
+        _next=(_next+1)%_thread_count;
+        return _loops[_next];
     }
 };
+//处理任何类型的请求（协议）上下文
+//不能使用模板因为模板在实例化时必须确定类型
+class Any
+{
+    //采用父子继承的方式实现Any中保存父的指针
+    //通过父类的虚函数实现对不同类型数据的操作
+    private:
+    class holder
+    {
+        public:
+        virtual ~holder(){}//父类的析构函数必须是虚函数，否则子类对象被销毁时不会调用子类的析构函数，导致资源泄漏
+        virtual holder* clone() const=0;//克隆函数用于复制对象
+        virtual const std::type_info & type() const=0;//获取对象类型信息 
+    };
+    template<class T>
+    class placeholder:public holder
+    {
+        public:
+        T _data;
+        public:
+        placeholder(const T& data):_data(data){}
+        virtual holder* clone() 
+        {
+            return new placeholder(_data);
+        }
+        virtual const std::type_info& type()
+        {
+            return typeid(T);
+        }
+    };  
+    private:
+    holder* _content;//保存任意类型数据的指针
+    public:
+    Any():_content(nullptr){}
+    template<class T>//模板构造
+    Any( const T& val):_content(new placeholder<T>(val)){}
+    //拷贝构造函数实现深拷贝
+    Any(const Any& other):_content(other._content?other._content->clone():nullptr){}
+    ~Any(){
+        if(_content)
+        {
+            delete _content;
+            _content=nullptr;
+        }
+    }
+    Any &swap(Any& other)
+    {
+        std::swap(_content,other._content);
+        return *this;
+    }
+    template<class T>
+    Any& operator=(const T &val)
+    {
+        Any(val).swap(*this);
+        return *this
+    }
+    Any& operator=(const Any& other)
+    {
+        Any(other).swap(*this);
+        return *this;
+    }
+};
+class Connection;//连接管理：套接字，丢包粘包，协议解析，连接上下文
