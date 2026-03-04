@@ -1030,7 +1030,7 @@ class Any
     Any& operator=(const T &val)
     {
         Any(val).swap(*this);
-        return *this
+        return *this;
     }
     Any& operator=(const Any& other)
     {
@@ -1346,8 +1346,45 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
             _loop->RunInLoop(std::bind(&Connection::UpgradeInLoop,this,context,conn,msg,closed,event));
         }
 };
-
+//对监听套接字的管理
 class Acceptor
 {
+    private:
+    Socket _socket;
+    EventLoop* _loop;//事件监控
+    Channel _channel;//事件管理
 
+    using AcceptorCallBack=std::function<void(int)>;
+    AcceptorCallBack _accept_callback;//监听套接字有连接请求回调
+    private:
+    void HandleRead()
+    {
+        int newfd=_socket.Accept();
+        if(newfd<0)
+        {
+            return;
+        }
+        if(_accept_callback){
+            _accept_callback(newfd);
+        }
+    }
+    int CreateServer(int port)
+    {
+        bool ret=_socket.CreateServer(port);
+        assert(ret==true);
+        return _socket.GetFd();
+    }
+    public:
+    Acceptor(EventLoop* loop,int port):_loop(loop),_socket(CreateServer(port)),_channel(loop,_socket.GetFd())
+    {
+        _channel.SetReadCallBack(std::bind(&Acceptor::HandleRead,this));
+    }
+    void SetAcceptorCallBack(const AcceptorCallBack& cb)
+    {
+        _accept_callback=cb;
+    }
+    void Listen()
+    {
+        _channel.EnableRead();
+    }
 };
