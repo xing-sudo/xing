@@ -21,6 +21,7 @@
 #include <sys/eventfd.h>
 #include <condition_variable>
 #include <typeinfo>
+#include <signal.h>
 // 宏函数定义
 #define INF 0
 #define DBG 1
@@ -946,7 +947,8 @@ class LoopThreadPool
     std::vector<EventLoop*> _loops;//从属线程>0则在loops中进行轮询分配
     std::vector<LoopThread*> _thread;//保存loopthread对象
     public:
-    LoopThreadPool(){}
+    LoopThreadPool(EventLoop* baseloop):_base_loop(baseloop),_thread_count(0),
+    _next(0){}
     void SetThreadCount(int  nums)
     {
         _thread_count=nums;
@@ -1399,8 +1401,8 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     int _timeout;
     bool _enable_inactive_release;
     Acceptor _acceptor;//监听
-    EventLoop* _loop;//事件监控
-    LoopThreadPool* _pool;//线程池
+    EventLoop _baseloop;//事件监控
+    LoopThreadPool _pool;//线程池
     std::unordered_map<uint64_t,PtrConnection> _connections;//连接管理
     
     using ConnectedCallBack=std::function<void(const PtrConnection&)>;
@@ -1416,11 +1418,11 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     void RunAfterInLoop(const Functor& cb,int delay)
     {
         _next_id++;
-        _loop->TimerAdd(_next_id,delay,cb);
+        _baseloop.TimerAdd(_next_id,delay,cb);
     }
     void NewConnection(int fd){
         _next_id++;
-        PtrConnection conn(new Connection(_pool->NextLoop(),_next_id,fd));
+        PtrConnection conn(new Connection(_pool.NextLoop(),_next_id,fd));
         conn->SetConnectedCallBack(_connected_callback);
         conn->SetMessageCallBack(_message_callback);
         conn->SetClosedCallBack(_closed_callback);
@@ -1444,5 +1446,76 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     public:
     TcpServer(int port):
     _port(port),
-    _timeout()
+    _next_id(0),
+    _enable_inactive_release(false),
+    _acceptor(&_baseloop,port),
+    _pool(&_baseloop)
+    {
+        _acceptor.SetAcceptorCallBack(std::bind(&TcpServer::NewConnection,this,std::placeholders::_1));
+        _acceptor.Listen();
+    }
+    void SetThreadCount(int num)
+    {
+        return _pool.SetThreadCount(num);
+    }
+    void SetConnectedCallBack(const ConnectedCallBack& cb)
+    {
+        _connected_callback=cb;
+    }
+    void SetMessageCallBack(const MessageCallBack& cb)
+    {
+        _message_callback=cb;
+    }
+    void SetClosedCallBack(const ClosedCallBack& cb)
+    {
+        _closed_callback=cb;
+    }
+    void SetAnyEventCallBack(const AnyEventCallBack& cb)
+    {
+        _any_event_callback=cb;
+    }
+    void EnableInactiveRelease(int sec)
+    {
+        _timeout=sec;
+        _enable_inactive_release=true;
+    }
+    void RunAfter(const Functor& cb,int delay)
+    {
+        //添加定时任务
+        _baseloop.RunInLoop(std::bind(&TcpServer::RunAfterInLoop,this,cb,delay));
+    }
+    void Start()
+    {
+        _baseloop.Start();
+    }
+};
+void Channel::Remove()
+{
+    return _loop->RemoveEvent(this);
+}
+void Channel::Update()
+{
+    return _loop->UpdataEvent(this);
+}
+void TimerWheel::TimerAdd(uint64_t id,uint32_t timeout,const Taskfunc &cb)
+{
+    return _loop->RunInLoop(std::bind(&TimerWheel::TimerAddInLoop,this,id,timeout,cb));
+}
+void TimerWheel::TimerCancel(uint64_t id)
+{
+    _loop->RunInLoop(std::bind(&TimerWheel::TimerCancelInLoop,this,id));
+}
+void TimerWheel::TimerRefresh(uint64_t id)
+{
+    return _loop->RunInLoop(std::bind(&TimerWheel::TimerRefreshInLoop,this,id));
+}
+
+class NetWork
+{
+    public:
+    NetWork()
+    {
+        DBG_LOG("SIGPIPE INIT");
+        signal(SIGPIPE,SIG_IGN);
+    }
 };
