@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <sys/stat.h>
+#include<regex>
 
 std::unordered_map<int, std::string> _statu_msg = {
     {100, "Continue"},
@@ -342,5 +343,168 @@ public:
             offset = pos + sep.size();
         }
         return arr->size();
+    }
+};
+
+class HttpRequest//储存HTTP信息要素:请求方法，请求路径，请求版本，请求头部，请求内容，content-length,长短连接
+{
+    public:
+    std::string _method;//请求方法
+    std::string _path;//请求路径
+    std::string _verson;//版本
+    std::string _body;//正文
+    std::smatch _matches;//资源路径的正则提取数据
+    std::unordered_map<std::string, std::string> _headers;//头部
+    std::unordered_map<std::string, std::string> _params;//查询字符串
+    public:
+    HttpRequest():_verson("HTTP/1.1"){}
+    void Reset()
+    {
+        _method.clear();
+        _path.clear();
+        _verson="HTTP/1.1";
+        _body.clear();  
+        std::smatch match;
+        _matches.swap(match);
+        _headers.clear();
+        _params.clear();    
+    }
+    //插入头部字段
+    void SetHeader(const std::string& key,const std::string& value)
+    {
+        _headers.insert(std::make_pair(key,value));
+    }
+    //判断是否存在对应的字段
+    bool Hasheader(const std::string& key) const
+    {
+        auto it=_headers.find(key);
+         if(it!=_headers.end())
+         {
+            return true;
+         }
+         return false;
+        
+    }
+    //获取字段对应的值
+    std::string GetHeader(const std::string& key) const
+    {
+        auto it=_headers.find(key);
+        if(it!=_headers.end())
+        {
+            return it->second;
+        }
+        return "";
+    }
+    //插入查询字符串
+    void SetParam(const std::string& key,const std::string& value)
+    {
+        _params.insert(std::make_pair(key,value));
+    }
+    //判断是否存在对应的查询字符串
+    bool HasParam(const std::string& key) const
+    {
+        auto it=_params.find(key);
+        if(it!=_params.end())
+        {
+            return true;
+        }
+        return false;
+    }
+    //获取查询字符串对应的值    
+    std::string GetParam(const std::string& key) const
+    {
+        auto it=_params.find(key);
+        if(it!=_params.end())
+        {
+            return it->second;
+        }
+        return "";  
+    }
+    //获取正文长度
+    size_t ContentLength() const
+    {
+        //获取Content-Length字段
+        bool ret=Hasheader("Content-Length");  
+        if(ret==false)
+        {
+            return 0;
+        }
+        std::string len=GetHeader("Content-Length");
+        return std::stol(len);
+    }
+    //判断是否是短链接
+    bool Close() const
+    {
+        //没有connection字段或者值为close都是短链接
+        if(Hasheader("Connection")==true&&GetHeader("Connection")=="keep-alive")
+        {
+            return false;
+        }
+        return true;
+    }
+};
+
+class HttpResponse//储存HTTP响应信息要素:状态码，响应头部，响应内容,重定向
+{
+    public:
+    int _status;//状态码
+    std::string _body;//响应正文
+    bool _redirect_flag;//是否重定向
+    std::string _redirect_url;//重定向地址
+    std::unordered_map<std::string, std::string> _headers;//响应头部
+    public:
+    void Reset()
+    {
+        _status=200;
+        _redirect_flag=false;
+        _body.clear();
+        _redirect_url.clear();
+        _headers.clear();
+    }
+    //插入头部字段
+    void SetHeader(const std::string& key,const std::string& value)
+    {
+        _headers.insert(std::make_pair(key,value));
+    }
+    //判断是否存在对应的字段
+    bool Hasheader(const std::string &key) const
+    {
+        auto it=_headers.find(key);
+        if(it!=_headers.end())
+        {
+            return true;
+        }
+        return false;
+    }
+    //获取指定字段的值
+    std::string GetHeader(const std::string & key) const
+    {
+        auto it=_headers.find(key);
+        if(it!=_headers.end())
+        {
+            return it->second;
+        }
+        return "";
+    }
+    //设置正文
+    void Setcontent(const std::string& body,const std::string &type="text/html")
+    {
+        _body=body;
+        SetHeader("Content-Type",type);
+    }
+    //设置重定向
+    void SetRedirect(const std::string& url,int status=302)
+    {
+        _status=status;
+        _redirect_flag=true;
+        _redirect_url=url;
+    }
+    bool Close()
+    {
+        if(Hasheader("Connection")==true&&GetHeader("Connection")=="keep-alive")
+        {
+            return false;
+        }
+        return true;
     }
 };
