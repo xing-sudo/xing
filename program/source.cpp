@@ -1029,6 +1029,12 @@ class Any
         return *this;
     }
     template<class T>
+    T* Get()
+    {
+        assert(typeid(T)==_content->type());
+        return &((placeholder<T>*)_content)->_data;
+    }
+    template<class T>
     Any& operator=(const T &val)
     {
         Any(val).swap(*this);
