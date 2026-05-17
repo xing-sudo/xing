@@ -9,7 +9,7 @@
 #include <regex>
 #include"source.cpp"
 
-std::unordered_map<int, std::string> _statu_msg = {
+const std::unordered_map<int, std::string> _statu_msg = {
     {100, "Continue"},
     {101, "Switching Protocol"},
     {102, "Processing"},
@@ -73,7 +73,7 @@ std::unordered_map<int, std::string> _statu_msg = {
     {510, "Not Extended"},
     {511, "Network Authentication Required"}};
 
-std::unordered_map<std::string, std::string> _mime_msg = {
+const std::unordered_map<std::string, std::string> _mime_msg = {
     {".aac", "audio/aac"},
     {".abw", "application/x-abiword"},
     {".arc", "application/x-freearc"},
@@ -214,7 +214,7 @@ public:
             }
             // 其余字符要编码成%HH形式，两位十六进制数
             char tmp[4] = {0};
-            snprintf(tmp, 4, "%%%02X", c); //%02X表示以2位十六进制数表示
+            snprintf(tmp, 4, "%%%02X", (unsigned char)c); //%02X表示以2位十六进制数表示
             res += tmp;
         }
         return res;
@@ -354,18 +354,18 @@ class HttpRequest // 储存HTTP信息要素:请求方法，请求路径，请求
 public:
     std::string _method;                                   // 请求方法
     std::string _path;                                     // 请求路径
-    std::string _verson;                                   // 版本
+    std::string _version;                                   // 版本
     std::string _body;                                     // 正文
     std::smatch _matches;                                  // 资源路径的正则提取数据
     std::unordered_map<std::string, std::string> _headers; // 头部
     std::unordered_map<std::string, std::string> _params;  // 查询字符串
 public:
-    HttpRequest() : _verson("HTTP/1.1") {}
+    HttpRequest() : _version("HTTP/1.1") {}
     void Reset()
     {
         _method.clear();
         _path.clear();
-        _verson = "HTTP/1.1";
+        _version = "HTTP/1.1";
         _body.clear();
         std::smatch match;
         _matches.swap(match);
@@ -633,7 +633,7 @@ private:
     bool ParseHttpLine(const std::string& line)
     {   //正则匹配
         std::smatch matches;
-        std::regex e("(GET|POST|PUT|HEAD|DELETE)([^?]*)(?:\\?(.*))?(HTTP/1\\.[01])(?:\n|\r\n)?",std::regex::icase);
+        std::regex e("(GET|POST|PUT|HEAD|DELETE) ([^?]*)(?:\\?(.*))? (HTTP/1\\.[01])(?:\n|\r\n)?",std::regex::icase);
         bool ret= std::regex_match(line,matches,e);
         if(ret==false)
         {
@@ -643,7 +643,7 @@ private:
         }
         _request._method=matches[1];//请求方法
         _request._path=Util::UrlDecode(matches[2],false);//请求路径
-        _request._verson=matches[4];//版本
+        _request._version=matches[4];//版本
         //提取查询字符串
         std::vector<std::string> query_string_arr;
         std::string query_str=matches[3];
@@ -713,9 +713,19 @@ public:
         switch(_recv_status)
         {
             //不同状态处理不同的事，但不能break，因为处理完头部应该立刻跳转处理正文
-            case RECV_HTTP_LINE:RecvHttpLine(buff);
-            case RECV_HTTP_HEAD:RecvHttpHead(buff);
-            case RECV_HTTP_BODY:RecvHttpBody(buff);
+            case RECV_HTTP_LINE:
+            if(!RecvHttpLine(buff))
+            return;
+            if(_recv_status!=RECV_HTTP_HEAD)
+            return;
+            case RECV_HTTP_HEAD:
+            if(!RecvHttpHead(buff))
+            return;
+            if(_recv_status!=RECV_HTTP_BODY)
+            return;
+            case RECV_HTTP_BODY:
+            if(!RecvHttpBody(buff))
+            return;
         }
         return;
     }
@@ -905,7 +915,7 @@ class HttpServer // 服务器类，负责监听端口，接收请求，处理请
         }
         //2.将rsp中的要素按照http的协议格式进行组织
         std::stringstream rsp_str;
-        rsp_str<<req._verson<<" "<<std::to_string(rsp._status)<<" "<<Util::StatusDesc(rsp._status)<<"\r\n";
+        rsp_str<<req._version<<" "<<std::to_string(rsp._status)<<" "<<Util::StatusDesc(rsp._status)<<"\r\n";
         for(auto& head:rsp._headers)
         {
             rsp_str<<head.first<<": "<<head.second<<"\r\n";

@@ -250,7 +250,7 @@ public:
     {
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
-        addr.sin_port + htons(port);
+        addr.sin_port = htons(port);
         addr.sin_addr.s_addr = inet_addr(ip.c_str());
         socklen_t len = sizeof(addr);
         int ret = connect(_sockfd, (struct sockaddr *)&addr, len);
@@ -356,6 +356,7 @@ public:
         if (block_flag)
             NonBlock();
         ReuseAddr();
+        return true;
     }
     // 创建客户端连接
     bool CreateClient(const std::string &ip, uint64_t port, bool block_flag = false)
@@ -479,14 +480,14 @@ public:
                 _write_callback();
             }
         }
-        else if (_revents & EPOLLHUP)
+         if (_revents & EPOLLHUP)
         {
             if (_close_callback)
             {
                 _close_callback();
             }
         }
-        else if (_revents & EPOLLERR)
+         if (_revents & EPOLLERR)
         {
             if (_error_callback)
             {
@@ -539,7 +540,7 @@ private:
 public:
     Poller()
     {
-        _epfd == epoll_create(MAX_EPOLLEVENTS);
+        _epfd = epoll_create(MAX_EPOLLEVENTS);
         if (_epfd < 0)
         {
             ERR_LOG("epoll_create failed!!");
@@ -555,6 +556,7 @@ public:
             _channels.insert(std::make_pair(channel->GetFd(), channel));
             return Updata(channel, EPOLL_CTL_ADD);
         }
+        return Updata(channel, EPOLL_CTL_MOD);
     }
     // 删除事件
     void RemoveEvent(Channel *channel)
@@ -572,7 +574,7 @@ public:
         int nfds = epoll_wait(_epfd, _events, MAX_EPOLLEVENTS, -1);
         if (nfds < 0)
         {
-            if (errno = EINTR)
+            if (errno == EINTR)
             {
                 return;
             }
@@ -685,6 +687,7 @@ private:
             ERR_LOG("read timerfd failed!!");
             abort();
         }
+        return (int)times;
     }
     void Run()
     {
@@ -717,6 +720,10 @@ private:
             return;
         }
         ShPtrTask pt = it->second.lock();
+        if(!pt)
+        {
+            ERR_LOG("TimerRefreshInLoop weak_ptr is nullptr");
+        }
         int delay = pt->Delaytime();
         int pos = (_tick + delay) % _capacity; // 计算该定时器对象应该放到时间轮的哪个位置
         _wheel[pos].push_back(pt);             // 放入时间轮
@@ -792,8 +799,8 @@ class EventLoop
     }
     void ReadEeventFd()
     {
-        uint64_t res=0;
-        res=read(_event_fd,&res,8);
+        uint64_t val=0;
+        ssize_t res=read(_event_fd,&val,8);
         if (res<0)
         {
             if(errno==EAGAIN||errno==EINTR)
@@ -807,8 +814,8 @@ class EventLoop
     }
     void WakeUpEventFd()
     {
-        uint64_t res=1;
-        res=write(_event_fd,&res,sizeof(res));
+        uint64_t val=1;
+        ssize_t res=write(_event_fd,&val,sizeof(val));
         if(res<0)
         {
             if(errno==EINTR)
@@ -949,6 +956,14 @@ class LoopThreadPool
     public:
     LoopThreadPool(EventLoop* baseloop):_base_loop(baseloop),_thread_count(0),
     _next(0){}
+    ~LoopThreadPool()
+    {
+        for(auto &e:_thread)
+        {
+            delete e;
+            e=nullptr;
+        }
+    }
     void SetThreadCount(int  nums)
     {
         _thread_count=nums;
@@ -998,12 +1013,12 @@ class Any
         public:
         T _data;
         public:
-        placeholder(const T& data):_data(data){}
-        virtual holder* clone() 
+       placeholder(const T& data):_data(data){}
+        virtual  holder* clone() const override
         {
             return new placeholder(_data);
         }
-        virtual const std::type_info& type()
+        virtual  std::type_info& type() const override
         {
             return typeid(T);
         }
@@ -1442,6 +1457,10 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
         _connections.insert(std::make_pair(_next_id,conn));
     }
     void RemoveConnection(const PtrConnection& conn)
+    {
+        _baseloop.RunInLoop(std::bind(&TcpServer::RemoveConnectionInLoop,this,conn));
+    }
+    void RemoveConnectionInLoop(const PtrConnection& conn)
     {
         int id=conn->Id();
         auto it=_connections.find(id);
