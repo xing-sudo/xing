@@ -47,6 +47,8 @@
 #define ERR_LOG(format, ...) LOG(ERR, format, ##__VA_ARGS__)
 
 #define BUFFER_SIZE 1024
+
+
 class Buffer
 {
 private:
@@ -298,6 +300,12 @@ public:
     ssize_t Send(const void *buff, size_t len, int flag = 0)
     {
         ssize_t ret = send(_sockfd, buff, len, flag);
+        if(ret==0)
+        {
+            // 对端关闭连接
+            DBG_LOG("对端连接关闭");
+            return 0;
+        }
         if (ret < 0)
         {
             if (errno == EAGAIN || errno == EINTR)
@@ -388,6 +396,8 @@ class Channel
     */
 private:
     int _fd; // 监控的文件描述符
+    std::weak_ptr<void> tie; // 监控对象的弱引用，防止监控对象被销毁后Channel还在访问它
+    bool _istie=false; // 标记是否关闭
     EventLoop *_loop;
     uint32_t _events;  // 监控的事件类型
     uint32_t _revents; // 触发的事件类型
@@ -404,6 +414,11 @@ public:
     _revents(0),
     _loop(loop)
     {}
+    void Tie(const std::shared_ptr<void> &obj)
+    {
+        tie = obj;
+        _istie=true;
+    } // 绑定监控对象
     int GetEvents() const
     {
         return _events;
@@ -439,19 +454,26 @@ public:
     void EnableRead()
     {
         _events |= EPOLLIN;
+        Update();
     } // 开启可读事件监控
     void EnableWrite()
     {
         _events |= EPOLLOUT;
+        Update();
     } // 开启可写事件监控
-    void DisableRead() { _events &= ~EPOLLIN; } // 关闭可读事件监控
+    void DisableRead() { 
+        _events &= ~EPOLLIN; 
+        Update();
+    } // 关闭可读事件监控
     void DisableWrite()
     {
         _events &= ~EPOLLOUT;
+        Update();
     } // 关闭可写事件监控
     void DisableAll()
     {
         _events = 0;
+        Update();
     } // 关闭所有事件监控
     bool ReadAble()
     {
@@ -461,10 +483,16 @@ public:
     {
         return _events & EPOLLOUT;
     } // 是否可写
-    void Remove() {} // 移除监控
-    void Update() {} // 更新监控事件
+    void Remove();// 移除监控
+    void Update();// 更新监控事件
     void HandleEvent()
     {
+        std::shared_ptr<void> obj ;
+        if(_istie)
+        {
+            obj = tie.lock();
+            if(!obj)return;
+        }
         if ((_revents & EPOLLIN) || (_revents & EPOLLRDHUP) || (_revents & EPOLLPRI))
         {
             // 可读事件触发，EPOLLRDHUP表示对端关闭连接，EPOLLPRI表示有紧急数据可读
@@ -1018,7 +1046,7 @@ class Any
         {
             return new placeholder(_data);
         }
-        virtual  std::type_info& type() const override
+        virtual  const std::type_info& type() const override
         {
             return typeid(T);
         }
@@ -1093,9 +1121,9 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
 
     ConnectedCallBack _connected_callback;//连接建立成功回调函数
     MessageCallBack _message_callback;//消息到达回调函数
-    ClosedCallBack _closed_callback;//连接关闭回调函数
+    ClosedCallBack _istie_callback;//连接关闭回调函数
     AnyEventCallBack _any_event_callback;//任意事件回调函数
-    ClosedCallBack _server_closed_callback;//服务器关闭回调函数
+    ClosedCallBack _server_istie_callback;//服务器关闭回调函数
     private:
     //五个channel事件回调
     void HandleRead()//读
@@ -1173,6 +1201,7 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
         _status=CONNECTED;
         //2.启动读监控
         _channel.EnableRead();
+        _channel.Tie(shared_from_this());//绑定监控对象，防止连接对象被销毁后channel还在访问它
         //3.调用用户设置的回调
         if(_connected_callback)
         {
@@ -1194,14 +1223,14 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
             CancelInactiveReleaseInLoop();
         }
         //5.调用关闭回调，避免先调用服务器回调导致连接释放，后续操作非法
-        if(_closed_callback)
+        if(_istie_callback)
         {
-            _closed_callback(shared_from_this());
+            _istie_callback(shared_from_this());
         }
         //移除服务器内部管理信息
-        if(_server_closed_callback)
+        if(_server_istie_callback)
         {
-            _server_closed_callback(shared_from_this());
+            _server_istie_callback(shared_from_this());
         }
     }
     //不是实际的发送接口只是将数据放到了缓冲区，并开启写监控
@@ -1271,7 +1300,7 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
         _context=context;
         _connected_callback=con;
         _message_callback=msg;
-        _closed_callback=closed;
+        _istie_callback=closed;
         _any_event_callback=any;
     }
     public:
@@ -1323,7 +1352,7 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
     }
     void SetClosedCallBack(const ClosedCallBack& cb)
     {
-        _closed_callback=cb;
+        _istie_callback=cb;
     }
     void SetAnyEventCallBack(const AnyEventCallBack& cb)
     {
@@ -1331,7 +1360,7 @@ class Connection:public std::enable_shared_from_this<Connection>//用智能指�
     }
     void SetServerCloseCallBack(const ClosedCallBack& cb)
     {
-        _server_closed_callback=cb;
+        _server_istie_callback=cb;
     }
     //连接建立完毕，进行channel的各种回调设置，启动读监控，调用connected_callback
     void Established()
@@ -1433,7 +1462,7 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     using Functor=std::function<void()>;
     ConnectedCallBack _connected_callback;
     MessageCallBack _message_callback;
-    ClosedCallBack _closed_callback;
+    ClosedCallBack _istie_callback;
     AnyEventCallBack _any_event_callback;
     private:
     void RunAfterInLoop(const Functor& cb,int delay)
@@ -1446,7 +1475,7 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
         PtrConnection conn(new Connection(_pool.NextLoop(),_next_id,fd));
         conn->SetConnectedCallBack(_connected_callback);
         conn->SetMessageCallBack(_message_callback);
-        conn->SetClosedCallBack(_closed_callback);
+        conn->SetClosedCallBack(_istie_callback);
         conn->SetAnyEventCallBack(_any_event_callback);
         conn->SetServerCloseCallBack(std::bind(&TcpServer::RemoveConnection,this,std::placeholders::_1));
         if(_enable_inactive_release)
@@ -1493,7 +1522,7 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     }
     void SetClosedCallBack(const ClosedCallBack& cb)
     {
-        _closed_callback=cb;
+        _istie_callback=cb;
     }
     void SetAnyEventCallBack(const AnyEventCallBack& cb)
     {
@@ -1511,6 +1540,7 @@ class TcpServer//对所有模块整合使使用者能够轻松创建服务器
     }
     void Start()
     {
+        _pool.Create();
         _baseloop.Start();
     }
 };

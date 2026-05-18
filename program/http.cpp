@@ -523,7 +523,7 @@ typedef enum
 } HttpRecvStatus;
 
 #define MAX_LINE 8192 // 最大行长度
-class HttpContext // 请求更新上下文，接收的数据不是一条完整的数据
+class Httpcontext // 请求更新上下文，接收的数据不是一条完整的数据
 {
 private:
     int _resp_status;            // 响应状态码
@@ -689,7 +689,7 @@ private:
         return true;
     }
 public:
-    HttpContext():_resp_status(200),_recv_status(RECV_HTTP_LINE){}
+    Httpcontext():_resp_status(200),_recv_status(RECV_HTTP_LINE){}
     void Reset()
     {
         _resp_status=200;
@@ -850,7 +850,7 @@ class HttpServer // 服务器类，负责监听端口，接收请求，处理请
     }
     void OnConnected(const PtrConnection&conn)//连接建立，设置上下文
     {
-        conn->SetContext(std::make_shared<HttpContext>());
+        conn->SetContext(Httpcontext());
         DBG_LOG("NEW CONNECTION %p",conn.get());
     }
     void OnMessage(const PtrConnection&conn,Buffer* buf)//buffer内的数据处理
@@ -858,7 +858,7 @@ class HttpServer // 服务器类，负责监听端口，接收请求，处理请
         while(buf->ReadAbleSize()>0)
         {
         //1.获取上下文
-        HttpContext* context=conn->GetContext()->Get<HttpContext>();
+        Httpcontext* context=conn->GetContext()->Get<Httpcontext>();
         //2.通过上下文对buffer数据进行解析,得到request对象
         //(1).缓冲区数据解析错误，直接回复错误响应
         context->RecvHttpRequest(buf);
